@@ -1,114 +1,89 @@
 module ScriptEngine where
 
-import TType
-import Text.Parsec hiding(try)
-import Text.ParserCombinators.Parsec
-import Data.String.Utils(replace)
+import Script.Type
+import Script.Parser
+import Control.Monad
+import Control.Monad.Except
+import System.IO
 
-loadScript = load
+find = undefined
 
-load :: String -> Script JScript
-load filename = do
-    dat <- parseFromFile script filename
-    case dat of
-        Left err -> error $ show err
-        Right a -> return a
+eval :: Env -> LispVal -> IOThrowsError LispVal
+eval env val@(String _) = return val
+eval env val@(Number _) = return val
+eval env val@(Bool _) = return val
+eval env (Atom id) = getVar env id
+eval env (List [Atom "quote", val]) = return val
+eval env (List [Atom "if", pred, conseq, alt]) = do
+     result <- eval env pred
+     case result of
+          Bool False -> eval env alt
+          otherwise -> eval env conseq
+eval env (List [Atom "set!", Atom var, form]) =
+     eval env form >>= setVar env var
 
-find :: JToken -> JScript -> Maybe JFunction
-find fName (JScript vr fs) =
-    case filter (\f -> name f == fName) fs of
-        [] -> Nothing
-        [f] -> Just f
+eval env (List [Atom "def", Atom var, List (Vector params : body)]) =
+     makeNormalFunc env params body >>= defineVar env var
 
-eval = evalJFunction
+eval env (List [Atom "def", Atom var, form]) =
+     eval env form >>= defineVar env var
 
-script :: Parser JScript
-script = do
-    vs <- many var
-    fs <- many def
-    return $ JScript vs fs
+eval env (List (Atom "def" : List (Atom var : params) : body)) =
+     makeNormalFunc env params body >>= defineVar env var
+eval env (List (Atom "def" : DottedList (Atom var : params) varargs : body)) =
+     makeVarArgs varargs env params body >>= defineVar env var
+eval env (List (Atom "fn" : List params : body)) =
+     makeNormalFunc env params body
+eval env (List (Atom "fn" : DottedList params varargs : body)) =
+     makeVarArgs varargs env params body
+eval env (List (Atom "fn" : varargs@(Atom _) : body)) =
+     makeVarArgs varargs env [] body
 
-jstr = do
-    char '"'
-    a <- many (letter<|>digit<|>noneOf "\""<|>space<|>oneOf "$")
-    char '"'
-    return $ JString a
-jint = do{a <- many1 digit;return $ JInt (read a :: Int)}
-jbool = do
-    a <- do{string "true";return True} <|> do{string "false";return False}
-    return $ JBool a
-jobj = do
-    char '{'
-    a <- sepBy1 (do{name <- many1 letter;char ':';v <- val;return (name,v)}) (char ',')
-    char '}'
-    return $ JObj a
-jarray = do{a <- many1 (jstr <|> jint <|> jbool <|> jobj);return $ JArray a}
+eval env (List (function : args)) = do
+     func <- eval env function
+     argVals <- mapM (eval env) args
+     apply func argVals
 
-val :: Parser JVal
-val = choice [jstr,jint,jbool,jobj,jarray]
+--eval env (List (Atom func : args)) = mapM (eval env) args >>= liftThrows . apply func
+eval env badForm = throwError $ BadSpecialForm "无法识别的格式" badForm
 
-var :: Parser JVar
-var = do
-    string "var"
-    many1 space
-    vName <- many1 letter
-    many space
-    char '='
-    many space
-    val <- val
-    return $ JVar (vName,val)
+evalAndPrint :: Env -> String -> IO ()
+evalAndPrint env expr =  evalString env expr >>= putStrLn
 
-varName (JVar (vName,_)) = vName
-varName (JExp (vName,_)) = vName
+evalString :: Env -> String -> IO String
+evalString env expr = runIOThrows $ liftM show $ (liftThrows $ readExpr expr) >>= eval env
 
-evalVars :: [JVar] -> [(JToken,JVal)] -> [(JToken,JVal)]
-evalVars [] stack = stack
-evalVars [v] stack = (varName v,evalVar v stack):stack
-evalVars (v:ls) stack = evalVars ls (evalVars [v] stack)
+apply :: LispVal -> [LispVal] -> IOThrowsError LispVal
+apply (PrimitiveFunc func) args = liftThrows $ func args
+apply (Func params varargs body closure) args =
+      if num params /= num args && varargs == Nothing
+         then throwError $ NumArgs (num params) args
+         else (liftIO $ bindVars closure $ zip params args) >>= bindVarArgs varargs >>= evalBody
+      where remainingArgs = drop (length params) args
+            num = toInteger . length
+            evalBody env = liftM last $ mapM (eval env) body
+            bindVarArgs arg env = case arg of
+                Just argName -> liftIO $ bindVars env [(argName, List $ remainingArgs)]
+                Nothing -> return env
+makeFunc varargs env params body = return $ Func (map showVal params) varargs body env
+makeNormalFunc = makeFunc Nothing
+makeVarArgs = makeFunc . Just . showVal
 
-evalVar :: JVar -> [(JToken,JVal)] -> JVal
-evalVar (JVar (vName,vVal)) _ = vVal
-evalVar (JExp (vName,op)) ls = evalOp op ls
+flushStr :: String -> IO ()
+flushStr str = putStr str >> hFlush stdout
 
-evalOp :: JOp -> [(JToken,JVal)] -> JVal
-evalOp (JStrOp exp) l = JString $ foldl (\s (name,JString val) -> replace ("$"++name) val s) exp l
-evalOp (JAddOp (JFVal (JInt a)) (JFVal (JInt b))) l = JInt (a+b)
-evalOp _ _ = undefined
+readPrompt :: String -> IO String
+readPrompt prompt = flushStr prompt >> getLine
 
+until_ :: Monad m => (a -> Bool) -> m a -> (a -> m ()) -> m ()
+until_ pred prompt action = do
+   result <- prompt
+   if pred result
+      then return ()
+      else action result >> until_ pred prompt action
 
-fRet :: Parser JField
-fRet = do
-    many space
-    string "return"
-    do{a <- val;return $ JFVal a} <|> do{a <- var;return $ JFVar a}
+runOne :: String -> IO ()
+runOne expr = primitiveBindings >>= flip evalAndPrint expr
 
-statement :: Parser JStatement
-statement = do
-    many space
-    v <- var
-
-
-def :: Parser JFunction
-def = do
-    string "function"
-    many1 space
-    fName <- many1 letter
-    char '('
-    fParams <- sepBy (many1 letter) (char ',')
-    char ')'
-    char '{';newline
-    many statement
-    newline;char '}'
-    return JFunction{
-        name=fName,params=fParams,vars=[],ret=Nothing
-    }
-
-evalJFunction :: [JVal] -> JFunction -> JVal
-evalJFunction vals (JFunction _ params vars ret) =
-    let ps = zip params vals
-        stack = evalVars vars ps
-    in
-        case ret of
-            Nothing -> JVoid
-            Just (JFVal val) -> val
-            Just (JFVar var) -> evalVar var stack
+runRepl :: IO ()
+runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Clojure>>> ") . evalAndPrint

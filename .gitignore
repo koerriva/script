@@ -1,10 +1,7 @@
 # Created by .ignore support plugin (hsz.mobi)
-将删除 .idea/compiler.xml
-将删除 .idea/misc.xml
-将删除 .idea/modules.xml
-将删除 .idea/thriftCompiler.xml
-将删除 .idea/workspace.xml
+/.idea
+/dist
+/out
 将删除 dist/
 将删除 out/
 将删除 srcipt.iml
-/.idea

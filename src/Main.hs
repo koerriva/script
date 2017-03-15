@@ -7,7 +7,7 @@ import System.IO
 import Control.Concurrent
 import ServiceEngine (load)
 import ScriptEngine (loadScript,find,eval)
-import TType
+import Type
 
 main = do
     putStrLn "Thrift-like srcipt engine v0.1"
@@ -47,7 +47,7 @@ lookFunction url@(URL url_type url_path url_params) service@(TService sName sFun
 
 execFunction :: URL -> TFunction -> IO TType
 execFunction (URL _ _ url_params) (TFunction _ fName _) = do
-    script <- loadScript "d:/work/script/script/hello.script"
+    script <- loadScript "d:/work/script/script/hello.clj"
     let params = map (JString . snd) url_params
     case find fName script of
         Nothing -> return $ TString "service not impeletion"

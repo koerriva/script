@@ -1,9 +1,8 @@
 module ServiceEngine where
 
-import TType
+import Type
 import Text.Parsec
 import Text.ParserCombinators.Parsec
-
 
 load :: String -> Service TService
 load filename = do
