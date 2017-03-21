@@ -1,3 +1,2 @@
-(def age 18)
-(defn say [name age] (println "Hello," name))
-(defn hello [name] (str "Hello," name))
+(def say1 ([name age] (str "Hello, " name ". I am " age " years old.")))
+(def say ([name age] (str "Hello, " name ". I am " age " years old.")))

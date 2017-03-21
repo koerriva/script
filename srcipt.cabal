@@ -7,8 +7,9 @@ executable script
   main-is:         Main.hs
   hs-source-dirs:  src
   build-depends:   base >= 4.8
-                    , parsec
-                    , http-server
-                    , url
-                    , HTTP
-                    , MissingH
+                 , parsec >= 3.1
+                 , http-server
+                 , url
+                 , HTTP
+                 , MissingH
+                 , mtl
