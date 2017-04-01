@@ -56,8 +56,8 @@ handler sockAddr url request = do
                     checkParams :: [Param] -> TFunction -> ResponseCode
                     checkParams params f = if fParams f == map (pack . fst) params then (2,0,0) else (4,0,0)
 
-            execService :: [Param] -> TFunction -> IO (Maybe LispVal)
-            execService params f = do
+            runService :: [Param] -> TFunction -> IO (Maybe LispVal)
+            runService params f = do
                 let script =  "script/hello.clj"
                     fname = (unpack . fName) f
                 result <- runScript script fname (map snd params)
