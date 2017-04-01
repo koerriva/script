@@ -36,7 +36,7 @@ handler sockAddr url request = do
             params = url_params url in
         case loadService (sname,fname,params) idl of
             (code@(2,0,0),Just s) -> do
-                r <- execService params s
+                r <- runService params s
                 case r of
                     Nothing  -> return $ response (5,0,1) "FAIL" "Service Not Ready"
                     Just a   -> return $ response code "Ok" (show a)
