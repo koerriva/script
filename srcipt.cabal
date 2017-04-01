@@ -13,3 +13,6 @@ executable script
                  , HTTP
                  , MissingH
                  , mtl
+                 , language-thrift
+                 , megaparsec
+                 , text

@@ -1,71 +1,34 @@
 module ServiceEngine where
 
-import Type
-import Text.Parsec
-import Text.ParserCombinators.Parsec
+import Language.Thrift.AST
+import Language.Thrift.Parser
+import Text.Megaparsec.Pos
+import qualified Data.Text as T
+import Thrift.Type
 
-load :: String -> Service TService
-load filename = do
-    dat <- parseFromFile service filename
+loadIDL :: FilePath -> IO IDL
+loadIDL filePath = do
+    dat <- parseFromFile filePath
     case dat of
-        Left err -> error $ show err
+        Left err -> (error . show) err
         Right a -> return a
 
+findService :: ServiceName -> IDL -> Maybe (Service SourcePos)
+findService sname idl =  find (\name (ServiceDefinition s) -> if serviceName s == T.pack name then Just s else Nothing) sname (programDefinitions idl)
 
-stringRef :: Parser TTypeRef
-stringRef = do{string "string";return TStringRef}
-intRef :: Parser TTypeRef
-intRef = do{string "i32";return TIntRef}
-boolRef :: Parser TTypeRef
-boolRef = do{string "bool";return TBoolRef}
-structRef :: Parser TTypeRef
-structRef = do{upper;many1 letter;return TStructRef}
-listRef :: Parser TTypeRef
-listRef = do{string "list";a <- between (char '<') (char '>') typeRef;return $ TListRef a}
+findFunction :: FunctionName -> Service SourcePos -> Maybe (Function SourcePos)
+findFunction fname s = find (\name f -> if functionName f == T.pack name then Just f else Nothing) fname (serviceFunctions s)
+fName = functionName
+fParams = (map fieldName) . functionParameters
 
+find :: (Eq c) => (a -> b -> Maybe c) ->  a -> [b] -> Maybe c
+find f a [] = Nothing
+find f a [b] = f a b
+find f a (b:ls) = let x = find f a [b] in if x == Nothing then find f a ls else x
 
-typeRef :: Parser TTypeRef
-typeRef = choice [stringRef,intRef,boolRef,structRef,listRef]
-
-parameter :: Parser Param
-parameter = do
-    pos <- many1 digit
-    char ':'
-    valRef <- typeRef
-    many1 space
-    valName <- many1 letter
-    return Param {
-        pIndex = read pos :: Int,
-        pName = valName,
-        pType = valRef,
-        pDefaultValue = Nothing
-    }
-
-parameters :: Parser [Param]
-parameters = sepBy parameter (char ',')
-
-function :: Parser TFunction
-function = do
-    skipMany space
-    fRetRef <- optionMaybe typeRef
-    many1 space
-    fName <- many1 letter
-    params <- between (char '(') (char ')') parameters
-    newline
-    return TFunction {
-        funReturnType = fRetRef
-       ,funName = fName
-       ,funParams = params
-    }
-
-service :: Parser TService
-service = do
-    string "service"
-    many1 space
-    sName <- many1 letter
-    many1 space
-    char '{'
-    newline
-    functions <- many function
-    char '}'
-    return TService {serviceName=sName,serviceFunctions=functions}
+fromConstVal :: ConstValue src -> TVal
+fromConstVal (ConstInt a _)  = TInt a
+fromConstVal (ConstFloat a _) = TFloat a
+fromConstVal (ConstLiteral a _) = TLiteral a
+fromConstVal (ConstList ls _) = TList $ map fromConstVal ls
+fromConstVal (ConstMap ls _) = TMap $ map (\(k,v) -> (fromConstVal k,fromConstVal v)) ls

@@ -26,8 +26,8 @@ until_ pred prompt action = do
 runRepl :: IO ()
 runRepl = primitiveBindings >>= until_ (== "quit") (readPrompt "Clojure>>> ") . evalAndPrint
 
-runFun :: String -> String -> [String] -> IO LispError
-runFun file func params = do
+runScript :: String -> String -> [String] -> IO LispError
+runScript file func params = do
     env <- primitiveBindings >>= flip bindVars [("args", List $ map String params)]
     runSafeIOThrows $ do
         liftM Default $ eval env (List [Atom "load", String file])

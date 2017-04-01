@@ -1,3 +1,4 @@
+{-# LANGUAGE DoAndIfThenElse #-}
 module Main where
 
 import Network.HTTP.Server
@@ -5,16 +6,17 @@ import Network.HTTP.Server.Logger
 import Network.URL
 import System.IO
 import Control.Concurrent
-import ServiceEngine (load)
-import ScriptEngine (runFun)
+import Control.Monad.Except
+import ServiceEngine
+import ScriptEngine (runScript)
 import Type
-import Script.Type (LispError(..))
+import Script.Type (LispError(..),LispVal)
+import Thrift.Type
+import Data.Text (pack,unpack)
 
 main = do
     putStrLn "Thrift-like srcipt engine v0.1"
-    service <- load "/home/yangyy/work/haskell/srcipt/script/hello.thrift"
-    print service
-    serverWith config (handler service)
+    serverWith config handler
 
 config = Config {
     srvLog = stdLogger
@@ -22,43 +24,50 @@ config = Config {
   , srvPort = 8080
 }
 
-handler :: TService -> Handler String
-handler service sockAddr url request = do
+handler :: Handler String
+handler sockAddr url request = do
+    idl <- loadIDL "script/hello.thrift"
     print url
-    case lookService url service of
-        (code@(2,0,0),Just f) -> do
-            r <- execService url f
-            case r of
-                TException err  -> return $ response (5,0,1) "FAIL" err
-                mapM_           -> return $ response code "Ok" (show r)
-        (code@(4,0,4),_) -> return $ response code "Service Not Found" "Service Not Found"
-        (code@(4,0,0),_) -> return $ response code "Bad Request" "Service Params Not Match"
+    if length (split (url_path url)) /= 2 then
+        return $ response (4,0,4) "Service Not Found" "Service Not Found"
+    else
+        let sname = (split (url_path url))!!0
+            fname = (split (url_path url))!!1
+            params = url_params url in
+        case loadService (sname,fname,params) idl of
+            (code@(2,0,0),Just s) -> do
+                r <- execService params s
+                case r of
+                    Nothing  -> return $ response (5,0,1) "FAIL" "Service Not Ready"
+                    Just a   -> return $ response code "Ok" (show a)
+            (code@(4,0,4),_) -> return $ response code "Service Not Found" "Service Not Found"
+            (code@(4,0,0),_) -> return $ response code "Bad Request" "Service Params Not Match"
+        where
+            split = words . map (\c -> if c=='/' then ' ' else c)
 
-lookService :: URL -> TService -> (ResponseCode,Maybe TFunction)
-lookService url@(URL url_type url_path url_params) service@(TService sName sFunctions) =
-    if url_path `elem` map ((\s -> sName++"/"++s) . funName) sFunctions then
-        case lookScript url service of
-            Just f -> ((2,0,0),Just f)
-            Nothing -> ((4,0,0),Nothing)
-        else ((4,0,4),Nothing)
-    where
-        lookScript :: URL -> TService -> Maybe TFunction
-        lookScript url@(URL url_type url_path url_params) service@(TService sName sFunctions) =
-            case filter (\(TFunction _ name params) -> sName++"/"++name == url_path) sFunctions of
-                [] -> Nothing
-                [f] -> if map fst url_params == map pName (funParams f) then Just f else Nothing
+            loadService :: (ServiceName,FunctionName,[Param]) -> IDL -> (ResponseCode,Maybe TFunction)
+            loadService (sname,fname,params) idl =
+                case findService sname idl of
+                    Nothing -> ((4,0,4),Nothing)
+                    Just s  -> case findFunction fname s of
+                                    Nothing -> ((4,0,4),Nothing)
+                                    Just f  -> (checkParams params f,Just f)
+                where
+                    checkParams :: [Param] -> TFunction -> ResponseCode
+                    checkParams params f = if fParams f == map (pack . fst) params then (2,0,0) else (4,0,0)
 
-execService :: URL -> TFunction -> IO TType
-execService (URL _ _ url_params) (TFunction _ fName _) = do
-    let script =  "/home/yangyy/work/haskell/srcipt/script/hello.clj"
-    result <- runFun script fName (map snd url_params )
-    print result
-    case result of
-        Default val -> return $ TString (show val)
-        _           -> return $ TException "service not impeletion"
+            execService :: [Param] -> TFunction -> IO (Maybe LispVal)
+            execService params f = do
+                let script =  "script/hello.clj"
+                    fname = (unpack . fName) f
+                result <- runScript script fname (map snd params)
+                print result
+                case result of
+                    Default val -> return $ Just val
+                    _           -> return $ Nothing
 
-response :: ResponseCode -> ResponseMsg -> ResponseData -> Response ResponseData
-response code msg dat = Response code msg [json,size dat] dat
-    where
-        json = Header HdrContentType "application/json"
-        size = Header HdrContentLength . show . length
+            response :: ResponseCode -> ResponseMsg -> ResponseData -> Response ResponseData
+            response code msg dat = Response code msg [json,size dat] dat
+                where
+                    json = Header HdrContentType "application/json"
+                    size = Header HdrContentLength . show . length

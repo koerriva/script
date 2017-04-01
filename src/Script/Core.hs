@@ -77,11 +77,16 @@ primitives = [("+", numericBinop (+)),
               ("str", str),
               ("first", first),
               ("next", next),
+              ("size", size),
               ("cons", cons),
               ("conj", conj),
               ("eq?", eqv),
               ("eqv?", eqv),
               ("equal?", equal)]
+
+size :: [LispVal] -> ThrowsError LispVal
+size [List a] = return $ Number . toInteger $ length a
+
 numericBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> ThrowsError LispVal
 numericBinop op           []  = throwError $ NumArgs 2 []
 numericBinop op singleVal@[_] = throwError $ NumArgs 2 singleVal
